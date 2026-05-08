@@ -1,0 +1,60 @@
+# for manual pool creation
+# gcloud container node-pools create tpu-v6e-single-host-spot \
+#   --location=$ZONE \
+#   --cluster=$CLUSTER_NAME \
+#   --spot \
+#   --num-nodes=1 \
+#   --reservation-affinity=none \
+#   --machine-type=ct6e-standard-4t \
+#   --project=$PROJECT_ID
+  
+apiVersion: v1
+kind: Service
+metadata:
+  name: headless-svc
+spec:
+  clusterIP: None
+  selector:
+    job-name: tpu-job
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: tpu-job
+spec:
+  backoffLimit: 0
+  completions: 1  # number of host per TPU slice
+  parallelism: 1  # number of host per TPU slice
+  completionMode: Indexed
+  template:
+    spec:
+      subdomain: headless-svc
+      restartPolicy: Never
+      nodeSelector:
+        cloud.google.com/gke-tpu-accelerator: tpu-v6e-slice
+        cloud.google.com/gke-tpu-topology: 2x2
+        cloud.google.com/gke-spot: "true"
+      tolerations:
+      - key: "google.com/tpu"
+        operator: "Exists"
+        effect: "NoSchedule"
+      containers:
+      - name: tpu-job
+        image: us-docker.pkg.dev/cloud-tpu-images/jax-ai-image/tpu:latest
+        ports:
+        - containerPort: 8471 # Default port using which TPU VMs communicate
+        - containerPort: 8431 # Port to export TPU runtime metrics, if supported.
+        command:
+        - bash
+        - -c
+        - |
+          python -c 'import jax; print("TPU cores:", jax.device_count())'
+        resources:
+          requests:
+            cpu: 10
+            memory: 128Gi
+            google.com/tpu: 4
+          limits:
+            cpu: 10
+            memory: 128Gi
+            google.com/tpu: 4

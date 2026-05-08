@@ -32,6 +32,7 @@ gcloud container clusters get-credentials $CLUSTER_NAME --location $ZONE --proje
 ```
 
 4. Create TPU Node Pool
+
 You can Create a CCC to request a specific TPU topology (e.g., v5e 2x4).
 
 ```bash
