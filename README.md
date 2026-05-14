@@ -57,3 +57,9 @@ gcloud container node-pools create tpu-v5-single-host-spot \
 # Test with a TPU job
 kubectl apply -f tpu-job.yaml
 ```
+
+
+## Tip
+
+After you get a spot TPU instance, you might want to keep the job running to hold the TPU instance. 
+Delete the job when you need the TPU instance for something else. Otherwise keep the job running to save the TPU instance.

@@ -37,6 +37,7 @@ spec:
         - -c
         - |
           python -c 'import jax; print("TPU cores:", jax.device_count())'
+          sleep 432000 # 5 days
         resources:
           requests:
             cpu: 10
