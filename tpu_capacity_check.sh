@@ -1,4 +1,4 @@
-for ZONE in us-south1-a europe-west4-a us-central1-a us-east5-c; do
+for ZONE in $(gcloud compute accelerator-types list --filter="name='tpu-v5-litepod'" --format="value(zone)" 2>/dev/null); do
   echo "Checking $ZONE..."
   if gcloud compute tpus tpu-vm create "check-$ZONE" \
     --zone="$ZONE" \
