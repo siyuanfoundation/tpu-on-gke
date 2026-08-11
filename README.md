@@ -58,8 +58,19 @@ gcloud container node-pools create tpu-v5-single-host-spot \
 kubectl apply -f tpu-job.yaml
 ```
 
+5. Create GPU Node Pool (NVIDIA L4)
+
+You can create a CCC to dynamically provision NVIDIA L4 GPU Spot instances:
+
+```bash
+kubectl apply -f gpu-compute-class.yaml
+
+# Test with a multi-pod GPU job
+kubectl apply -f gpu-job-ccc.yaml
+```
 
 ## Tip
 
-After you get a spot TPU instance, you might want to keep the job running to hold the TPU instance. 
-Delete the job when you need the TPU instance for something else. Otherwise keep the job running to save the TPU instance.
+After you get a spot TPU/GPU instance, you might want to keep the job running to hold the instance. 
+Delete the job when you need the accelerator for something else. Otherwise keep the job running to save the instance.
+
