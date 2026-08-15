@@ -1,3 +1,5 @@
+#!/usr/bin/env bash
+
 ZONES=(
   us-central1-a
   us-central1-b

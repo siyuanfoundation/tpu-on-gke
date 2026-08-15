@@ -1,3 +1,5 @@
+#!/usr/bin/env bash
+
 ZONES=(
   europe-west1-b
   europe-west1-c

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # Configuration Constants
 TPU_ACCELERATOR_NAME="${TPU_ACCELERATOR_NAME:-tpu-v5-litepod}"
@@ -11,6 +11,7 @@ GPU_MACHINE_TYPE="${GPU_MACHINE_TYPE:-g2-standard-4}"
 GPU_QUOTA_METRIC="${GPU_QUOTA_METRIC:-}"
 
 CHECK_QUOTA="${CHECK_QUOTA:-true}"
+INCLUDE_DWS="${INCLUDE_DWS:-true}"
 USE_SPOT="${USE_SPOT:-true}"
 
 PROJECT_FLAG=()
@@ -22,12 +23,19 @@ echo "=================================================="
 echo "Checking accelerator catalog availability & quota..."
 echo "TPU: $TPU_ACCELERATOR_NAME ($TPU_TYPE)"
 echo "GPU: $GPU_ACCELERATOR_NAME ($GPU_MACHINE_TYPE)"
-echo "Check Quotas: $CHECK_QUOTA (Spot: $USE_SPOT)"
+echo "Check Quotas: $CHECK_QUOTA (Spot: $USE_SPOT, DWS: $INCLUDE_DWS)"
 echo "=================================================="
 
 # Fetch zones with TPU and GPU accelerator types from catalog
-readarray -t RAW_TPU_ZONES < <(gcloud compute accelerator-types list "${PROJECT_FLAG[@]}" --filter="name='$TPU_ACCELERATOR_NAME'" --format="value(zone)" 2>/dev/null | sort -u)
-readarray -t RAW_GPU_ZONES < <(gcloud compute accelerator-types list "${PROJECT_FLAG[@]}" --filter="name='$GPU_ACCELERATOR_NAME'" --format="value(zone)" 2>/dev/null | sort -u)
+RAW_TPU_ZONES=()
+while IFS= read -r line; do
+  [[ -n "$line" ]] && RAW_TPU_ZONES+=("$line")
+done < <(gcloud compute accelerator-types list "${PROJECT_FLAG[@]}" --filter="name='$TPU_ACCELERATOR_NAME'" --format="value(zone)" 2>/dev/null | sort -u)
+
+RAW_GPU_ZONES=()
+while IFS= read -r line; do
+  [[ -n "$line" ]] && RAW_GPU_ZONES+=("$line")
+done < <(gcloud compute accelerator-types list "${PROJECT_FLAG[@]}" --filter="name='$GPU_ACCELERATOR_NAME'" --format="value(zone)" 2>/dev/null | sort -u)
 
 if [[ ${#RAW_TPU_ZONES[@]} -eq 0 ]]; then
   echo "Error: No zones found in catalog offering $TPU_ACCELERATOR_NAME."
@@ -44,9 +52,9 @@ GPU_ZONES=("${RAW_GPU_ZONES[@]}")
 
 # Filter candidate zones by Compute Engine Quota
 if [[ "$CHECK_QUOTA" == "true" ]]; then
-  echo "Filtering catalog zones by available GCE project quota..."
+  echo "Filtering catalog zones by available GCE project quota (including DWS: $INCLUDE_DWS)..."
 
-  QUOTA_OUTPUT=$(python3 - "${TPU_ACCELERATOR_NAME}" "${TPU_TYPE}" "${TPU_QUOTA_METRIC}" "${GPU_ACCELERATOR_NAME}" "${GPU_QUOTA_METRIC}" "${USE_SPOT}" "${PROJECT_ID:-}" <<'EOF'
+  QUOTA_OUTPUT=$(python3 - "${TPU_ACCELERATOR_NAME}" "${TPU_TYPE}" "${TPU_QUOTA_METRIC}" "${GPU_ACCELERATOR_NAME}" "${GPU_QUOTA_METRIC}" "${USE_SPOT}" "${INCLUDE_DWS}" "${PROJECT_ID:-}" <<'EOF'
 import json, subprocess, sys
 
 tpu_accel = sys.argv[1]
@@ -55,64 +63,104 @@ tpu_quota_override = sys.argv[3]
 gpu_accel = sys.argv[4]
 gpu_quota_override = sys.argv[5]
 use_spot = sys.argv[6].lower() == "true"
-project_id = sys.argv[7]
+include_dws = sys.argv[7].lower() == "true"
+project_id = sys.argv[8]
 
 # 1. Determine TPU quota metrics
 if tpu_quota_override:
     tpu_metrics = [tpu_quota_override]
-elif use_spot:
-    if "v5" in tpu_accel or "v5" in tpu_type:
-        tpu_metrics = ["PREEMPTIBLE_TPU_LITE_PODSLICE_V5", "PREEMPTIBLE_TPU_LITE_DEVICE_V5"]
-    elif "v6" in tpu_accel or "v6" in tpu_type:
-        tpu_metrics = ["PREEMPTIBLE_TPU_V6E_PODSLICE", "TPU_V6E_PODSLICE"]
-    else:
-        tpu_metrics = ["PREEMPTIBLE_TPU_LITE_PODSLICE_V5", "PREEMPTIBLE_TPU_LITE_DEVICE_V5"]
 else:
-    if "v5" in tpu_accel or "v5" in tpu_type:
-        tpu_metrics = ["TPU_LITE_PODSLICE_V5", "TPU_LITE_DEVICE_V5"]
-    elif "v6" in tpu_accel or "v6" in tpu_type:
-        tpu_metrics = ["TPU_V6E_PODSLICE"]
+    tpu_metrics = []
+    if use_spot:
+        if "v5" in tpu_accel or "v5" in tpu_type:
+            tpu_metrics.extend(["PREEMPTIBLE_TPU_LITE_PODSLICE_V5", "PREEMPTIBLE_TPU_LITE_DEVICE_V5"])
+        elif "v6" in tpu_accel or "v6" in tpu_type:
+            tpu_metrics.extend(["PREEMPTIBLE_TPU_V6E_PODSLICE", "TPU_V6E_PODSLICE"])
+        else:
+            tpu_metrics.extend(["PREEMPTIBLE_TPU_LITE_PODSLICE_V5", "PREEMPTIBLE_TPU_LITE_DEVICE_V5"])
     else:
-        tpu_metrics = ["TPU_LITE_PODSLICE_V5", "TPU_LITE_DEVICE_V5"]
+        if "v5" in tpu_accel or "v5" in tpu_type:
+            tpu_metrics.extend(["TPU_LITE_PODSLICE_V5", "TPU_LITE_DEVICE_V5"])
+        elif "v6" in tpu_accel or "v6" in tpu_type:
+            tpu_metrics.extend(["TPU_V6E_PODSLICE"])
+        else:
+            tpu_metrics.extend(["TPU_LITE_PODSLICE_V5", "TPU_LITE_DEVICE_V5"])
+
+    if include_dws:
+        if "v5" in tpu_accel or "v5" in tpu_type:
+            tpu_metrics.extend([
+                "DWS_PREEMPTIBLE_TPU_LITE_PODSLICE_V5",
+                "DWS_PREEMPTIBLE_TPU_LITE_DEVICE_V5",
+                "DWS_TPU_LITE_PODSLICE_V5",
+                "DWS_TPU_LITE_DEVICE_V5",
+                "DWS_TPU_V5E_SLICE",
+                "DWS_TPU_V5_LITE_PODSLICE",
+                "DWS_TPU_V5_LITE_DEVICE"
+            ])
+        elif "v6" in tpu_accel or "v6" in tpu_type:
+            tpu_metrics.extend([
+                "DWS_PREEMPTIBLE_TPU_V6E_PODSLICE",
+                "DWS_TPU_V6E_PODSLICE",
+                "DWS_TPU_V6E_SLICE",
+                "DWS_TPU_V6E_DEVICE"
+            ])
+        else:
+            tpu_metrics.extend([
+                "DWS_PREEMPTIBLE_TPU_LITE_PODSLICE_V5",
+                "DWS_PREEMPTIBLE_TPU_LITE_DEVICE_V5",
+                "DWS_TPU_LITE_PODSLICE_V5",
+                "DWS_TPU_LITE_DEVICE_V5"
+            ])
 
 # 2. Determine GPU quota metrics
 gpu_accel_lower = gpu_accel.lower()
 if gpu_quota_override:
     gpu_metrics = [gpu_quota_override]
-elif use_spot:
-    if "l4" in gpu_accel_lower:
-        gpu_metrics = ["PREEMPTIBLE_NVIDIA_L4_GPUS"]
-    elif "a100-80gb" in gpu_accel_lower:
-        gpu_metrics = ["PREEMPTIBLE_NVIDIA_A100_80GB_GPUS"]
-    elif "a100" in gpu_accel_lower:
-        gpu_metrics = ["PREEMPTIBLE_NVIDIA_A100_GPUS"]
-    elif "t4" in gpu_accel_lower:
-        gpu_metrics = ["PREEMPTIBLE_NVIDIA_T4_GPUS"]
-    elif "v100" in gpu_accel_lower:
-        gpu_metrics = ["PREEMPTIBLE_NVIDIA_V100_GPUS"]
-    elif "p100" in gpu_accel_lower:
-        gpu_metrics = ["PREEMPTIBLE_NVIDIA_P100_GPUS"]
-    elif "p4" in gpu_accel_lower:
-        gpu_metrics = ["PREEMPTIBLE_NVIDIA_P4_GPUS"]
-    else:
-        gpu_metrics = ["PREEMPTIBLE_NVIDIA_L4_GPUS"]
 else:
+    gpu_metrics = []
+    prefix = "PREEMPTIBLE_" if use_spot else ""
     if "l4" in gpu_accel_lower:
-        gpu_metrics = ["NVIDIA_L4_GPUS"]
+        gpu_metrics.append(f"{prefix}NVIDIA_L4_GPUS")
+        if include_dws:
+            gpu_metrics.extend(["DWS_PREEMPTIBLE_NVIDIA_L4_GPUS", "DWS_NVIDIA_L4_GPUS"])
     elif "a100-80gb" in gpu_accel_lower:
-        gpu_metrics = ["NVIDIA_A100_80GB_GPUS"]
+        gpu_metrics.append(f"{prefix}NVIDIA_A100_80GB_GPUS")
+        if include_dws:
+            gpu_metrics.extend(["DWS_PREEMPTIBLE_NVIDIA_A100_80GB_GPUS", "DWS_NVIDIA_A100_80GB_GPUS"])
     elif "a100" in gpu_accel_lower:
-        gpu_metrics = ["NVIDIA_A100_GPUS"]
+        gpu_metrics.append(f"{prefix}NVIDIA_A100_GPUS")
+        if include_dws:
+            gpu_metrics.extend(["DWS_PREEMPTIBLE_NVIDIA_A100_GPUS", "DWS_NVIDIA_A100_GPUS"])
+    elif "h100" in gpu_accel_lower:
+        gpu_metrics.extend([f"{prefix}NVIDIA_H100_GPUS", f"{prefix}NVIDIA_H100_80GB_GPUS"])
+        if include_dws:
+            gpu_metrics.extend([
+                "DWS_PREEMPTIBLE_NVIDIA_H100_GPUS", "DWS_NVIDIA_H100_GPUS",
+                "DWS_PREEMPTIBLE_NVIDIA_H100_80GB_GPUS", "DWS_NVIDIA_H100_80GB_GPUS"
+            ])
     elif "t4" in gpu_accel_lower:
-        gpu_metrics = ["NVIDIA_T4_GPUS"]
+        gpu_metrics.append(f"{prefix}NVIDIA_T4_GPUS")
+        if include_dws:
+            gpu_metrics.extend(["DWS_PREEMPTIBLE_NVIDIA_T4_GPUS", "DWS_NVIDIA_T4_GPUS"])
     elif "v100" in gpu_accel_lower:
-        gpu_metrics = ["NVIDIA_V100_GPUS"]
+        gpu_metrics.append(f"{prefix}NVIDIA_V100_GPUS")
+        if include_dws:
+            gpu_metrics.extend(["DWS_PREEMPTIBLE_NVIDIA_V100_GPUS", "DWS_NVIDIA_V100_GPUS"])
     elif "p100" in gpu_accel_lower:
-        gpu_metrics = ["NVIDIA_P100_GPUS"]
+        gpu_metrics.append(f"{prefix}NVIDIA_P100_GPUS")
+        if include_dws:
+            gpu_metrics.extend(["DWS_PREEMPTIBLE_NVIDIA_P100_GPUS", "DWS_NVIDIA_P100_GPUS"])
     elif "p4" in gpu_accel_lower:
-        gpu_metrics = ["NVIDIA_P4_GPUS"]
+        gpu_metrics.append(f"{prefix}NVIDIA_P4_GPUS")
+        if include_dws:
+            gpu_metrics.extend(["DWS_PREEMPTIBLE_NVIDIA_P4_GPUS", "DWS_NVIDIA_P4_GPUS"])
     else:
-        gpu_metrics = ["NVIDIA_L4_GPUS"]
+        gpu_metrics.append(f"{prefix}NVIDIA_L4_GPUS")
+        if include_dws:
+            gpu_metrics.extend(["DWS_PREEMPTIBLE_NVIDIA_L4_GPUS", "DWS_NVIDIA_L4_GPUS"])
+
+tpu_metrics = list(dict.fromkeys(tpu_metrics))
+gpu_metrics = list(dict.fromkeys(gpu_metrics))
 
 cmd = ["gcloud", "compute", "regions", "list", "--format=json(name,quotas)"]
 if project_id:

@@ -1,10 +1,13 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # Configuration Constants
 GPU_ACCELERATOR_NAME="${GPU_ACCELERATOR_NAME:-nvidia-l4}"
 GPU_MACHINE_TYPE="${GPU_MACHINE_TYPE:-g2-standard-4}"
 
-readarray -t ZONES < <(gcloud compute accelerator-types list --filter="name='$GPU_ACCELERATOR_NAME'" --format="value(zone)" 2>/dev/null)
+ZONES=()
+while IFS= read -r line; do
+  [[ -n "$line" ]] && ZONES+=("$line")
+done < <(gcloud compute accelerator-types list --filter="name='$GPU_ACCELERATOR_NAME'" --format="value(zone)" 2>/dev/null)
 
 for ZONE in "${ZONES[@]}"; do
   echo "Checking $ZONE..."
